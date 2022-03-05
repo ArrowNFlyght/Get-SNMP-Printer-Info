@@ -1,0 +1,229 @@
+<#
+    .SYNOPSIS
+    SNMP Printer Information - Scan of Printers for SNMP Values
+
+    .DESCRIPTION
+    This script will take an input from a file of IP addresses and request SNMP values for information.
+    The information includes model, manufacturer, name of printer, WS Discover, WS Print, Bonjour, Wi-Fi Direct, Toner level and firmware version.
+
+    The output will be in csv format at the chosen destination.
+    Works with HP and RICOH/Lanier printers.
+    
+    .PARAMETER List
+    Enter the path to a file containing IP addresses to be scanned.
+    If this option is not configured, it will be requested via console.
+
+    .PARAMETER Output
+    Enter the path and filename to the output file. Will create specified .csv if it does not exist.
+    If this option is not configured, it will be requested via console.
+
+    .EXAMPLE
+    Get-SNMPPrinterInfo -List C:\IPs.txt -Output C:\PrinterStats
+
+    This will prompt each IP address in the IPs.txt file for SNMP values
+#>
+
+param(
+[Parameter(Mandatory=$True)]
+$List,
+
+[Parameter(Mandatory=$True)]
+$Output
+)
+
+#Get content from file
+$printers = Get-Content -Path $List
+
+#Create Objects
+$SNMP = New-Object -ComObject olePrn.OleSNMP
+$ping = New-Object System.Net.NetworkInformation.Ping
+
+#Table Name
+$tabName = "PrinterInfo"
+
+#Create Table Object
+$table = New-Object system.Data.DataTable "PrinterInfo"
+
+#Define Columns
+$col1 = New-Object System.Data.DataColumn "Printer Name", ([string])
+$col2 = New-Object System.Data.DataColumn "Model", ([string])
+$col3 = New-Object System.Data.DataColumn "IP Address", ([string])
+$col4 = New-Object System.Data.DataColumn "WSD", ([Object])
+$col5 = New-Object System.Data.DataColumn "WSPrint", ([string])
+$col6 = New-Object System.Data.DataColumn "Bonjour", ([string])
+$col7 = New-Object System.Data.DataColumn "Wi-Fi Direct", ([string])
+$col8 = New-Object System.Data.DataColumn "GET", ([string])
+$col9 = New-Object System.Data.DataColumn "Toner", ([string])
+$col10 = New-Object System.Data.DataColumn "Firmware", ([string])
+
+#Add Columns
+$table.Columns.add($col1)
+$table.Columns.add($col2)
+$table.Columns.add($col3)
+$table.Columns.add($col4)
+$table.Columns.add($col5)
+$table.Columns.add($col6)
+$table.Columns.add($col7)
+$table.Columns.add($col8)
+$table.Columns.add($col9)
+$table.Columns.Add($col10)
+
+#Add header row
+$rw = $table.NewRow()
+$key = 'Key: 0 = off, 1 = on, SET = has value, NOT_SET = no value'
+$rw."Printer Name" = $key
+$table.Rows.Add($rw)
+
+foreach ($printer in $printers){
+    
+    #Validate Input
+    try{$RESULT = $ping.Send($printer)} catch {$RESULT = $null}
+        
+    #check printer status, open SNMP on success
+    if($RESULT.Status -eq 'Success'){
+
+        #Open SNMP Connection to Printer
+        $SNMP.open($printer,'public',2,3000)
+ 
+        #Get model
+        try {$model = $SNMP.Get('.1.3.6.1.2.1.25.3.2.1.3.1') } catch {$model = $null}
+
+        #Get Name
+        try{$printerName = $SNMP.Get('.1.3.6.1.2.1.1.5.0') } catch {$printerName = $null}
+
+        #Get Manufacturer
+        $make = $SNMP.Get('.1.3.6.1.2.1.43.8.2.1.14.1.1')
+
+        #Create a row and add base info
+        $row = $table.NewRow()
+        $row."Printer Name" = $printerName
+        $row."Model" = $model
+        $row."IP Address" = $printer
+           
+            if ($model){
+
+                #HP
+                if($make -eq "HP" -or
+                   $make -eq "Hewlett-Packard"){
+
+                   #WSDiscovery
+                   $WSDISCOVER = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.36') 
+                   $strWSD = Out-String -InputObject $WSDISCOVER
+                   $strWSD = $strWSD.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.36.0")
+                   $row."WSD" = $strWSD.Trim()
+
+                   #WSPrint
+                   $WSPRINT = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.37') 
+                   $strWSPRINT = Out-String -InputObject $WSPRINT
+                   $strWSPRINT = $strWSPRINT.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.37.0")
+                   $row."WSPrint" = $strWSPRINT.Trim()
+
+                   #Bonjour
+                   $BONJOUR = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.29')
+                   $strBONJOUR = Out-String -InputObject $BONJOUR
+                   $strBONJOUR = $strBONJOUR.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.29.0")
+                   $row."Bonjour" = $strBONJOUR.Trim()
+                 
+                   #WiFi Direct
+                   try{$WFD = $SNMP.Get('.1.3.6.1.4.1.11.2.4.3.7.74.0')} catch{$WFD = $null}
+                   
+
+                        if ($WFD -eq '0' -or
+                            $WFD -eq '1'){
+
+                            $row."Wi-Fi Direct" = $WFD
+
+                        }
+                        else{$row."Wi-Fi Direct" = 'NA'}
+
+                   #SNMP GET
+                   $GET = $SNMP.get('.1.3.6.1.4.1.2699.1.2.1.2.1.1.7.1')          
+                   $strGET = Out-String -InputObject $GET
+                   $row."GET" = $strGET.Trim()
+
+                   #Toner
+                   $Toner = $SNMP.Get('.1.3.6.1.2.1.43.11.1.1.9.1.1')          
+                   $strToner = Out-String -InputObject $Toner
+                   $row."Toner" = $strToner.Trim() + "%"
+
+                   #Firmware
+                   $firmware = $SNMP.Get('.1.3.6.1.4.1.11.2.3.9.4.2.1.1.3.5.0')
+                   $strFirmware = Out-String -InputObject $firmware
+                   $row."Firmware" = $strFirmware.Trim()
+
+                   #Add Row
+                   $table.Rows.Add($row)
+
+                   }
+
+                #Copier
+                elseif($make -eq 'RICOH'){
+                
+                    #Bonjour
+                    $BONJOUR = $SNMP.GET('.1.3.6.1.2.1.43.14.1.1.8.1.4')
+                    $strBONJOUR = Out-String -InputObject $BONJOUR
+                    $row."Bonjour" = $strBONJOUR.Trim()
+                    
+                    #WSD
+                    $WSDISCOVER = $SNMP.Get('.1.3.6.1.2.1.43.14.1.1.8.1.6')
+                    $strWSD = Out-String -InputObject $WSDISCOVER
+                    $row."WSD" = $strWSD.TrimEnd()
+
+                    #WSPrint
+                    $WSPRINT = $SNMP.Get('.1.3.6.1.2.1.43.14.1.1.8.1.7')
+                    $strWSP = Out-String -InputObject $WSPRINT
+                    $row."WSPrint" = $strWSP.TrimEnd()
+
+                    #WFD
+                    $strWFD = "NA"
+                    $row."Wi-Fi Direct" = $strWFD
+
+                    #GET
+                    $GET = $SNMP.Get('.1.3.6.1.4.1.2699.1.2.1.2.1.1.7.1')
+                    $strGET = Out-String -InputObject $GET
+                    $row."GET" = $strGET.TrimEnd()
+
+                    #Toner
+                    $TonerBK = $SNMP.Get('.1.3.6.1.2.1.43.11.1.1.9.1.1') #Black
+                    $strTonerBK = Out-String -InputObject $TonerBK
+                    $row."Toner" = $strTonerBK.Trim() + "%"
+
+                    #Firmware
+                    $firmware = $SNMP.Get('.1.3.6.1.4.1.367.3.2.1.1.1.2.0')
+                    $strFirmware = Out-String -InputObject $firmware
+                    $row."Firmware" = $strFirmware.Trim()
+
+                    $table.Rows.Add($row)
+                    }
+
+                #Output error if not a recognized make
+                else{
+                $model = "not recognized"
+                $row."Model" = $model
+                $table.Rows.Add($row)
+                }
+
+            }
+         }
+
+    #for bad IP
+    else{
+        #Assign Error Output
+        $printer = "Bad Input: " + $printer
+        $printerName = "ERROR"
+        $model = "ERROR"
+
+        #Create a row and add row
+        $rw = $table.NewRow()
+        $rw."Printer Name" = $printerName
+        $rw."Model" = $model
+        $rw."IP Address" = $printer
+        $table.Rows.Add($rw)
+    }
+
+}
+#Close SNMP
+$SNMP.Close()
+#Export to CSV
+$table | Export-Csv -Path $Output -NoTypeInformation
+ 
