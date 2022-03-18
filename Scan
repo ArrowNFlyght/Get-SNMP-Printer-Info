@@ -78,7 +78,20 @@ foreach ($printer in $printers){
     
     #Validate Input
     try{$RESULT = $ping.Send($printer)} catch {$RESULT = $null}
-        
+    
+    #test for timed out connection
+    $i = 0
+    while($RESULT.Status -eq "TimedOut"){
+    Write-Output "$printer failed, reattempting"
+    $RESULT = $ping.Send($printer)
+    $i++
+    if($i -eq 2){
+    Write-Output "Connection failed"
+    break
+        }
+    if($RESULT.Status -eq "Success"){Write-Output "Connection Established"}
+    }
+    
     #check printer status, open SNMP on success
     if($RESULT.Status -eq 'Success'){
 
@@ -157,20 +170,22 @@ foreach ($printer in $printers){
                    }
 
                 #Copier
-                elseif($make -eq 'RICOH'){
+                 elseif($make -eq 'RICOH' -or
+                       $make -eq 'LANIER'){
                 
                     #Bonjour
-                    $BONJOUR = $SNMP.GET('.1.3.6.1.2.1.43.14.1.1.8.1.4')
+                    $BONJOUR = $SNMP.GET('.1.3.6.1.4.1.2699.1.2.1.3.1.1.2.1.7') - 1
                     $strBONJOUR = Out-String -InputObject $BONJOUR
                     $row."Bonjour" = $strBONJOUR.Trim()
                     
+
                     #WSD
-                    $WSDISCOVER = $SNMP.Get('.1.3.6.1.2.1.43.14.1.1.8.1.6')
+                    $WSDISCOVER = $SNMP.Get('.1.3.6.1.4.1.2699.1.2.1.3.1.1.2.1.13') - 1
                     $strWSD = Out-String -InputObject $WSDISCOVER
                     $row."WSD" = $strWSD.TrimEnd()
 
                     #WSPrint
-                    $WSPRINT = $SNMP.Get('.1.3.6.1.2.1.43.14.1.1.8.1.7')
+                    $WSPRINT = $SNMP.Get('.1.3.6.1.4.1.2699.1.2.1.2.1.1.8.1') - 1
                     $strWSP = Out-String -InputObject $WSPRINT
                     $row."WSPrint" = $strWSP.TrimEnd()
 
@@ -209,7 +224,7 @@ foreach ($printer in $printers){
     #for bad IP
     else{
         #Assign Error Output
-        $printer = "Bad Input: " + $printer
+        $printer = $printer + ": Printer not found or not responding"
         $printerName = "ERROR"
         $model = "ERROR"
 
