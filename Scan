@@ -45,16 +45,20 @@ $tabName = "PrinterInfo"
 $table = New-Object system.Data.DataTable "PrinterInfo"
 
 #Define Columns
-$col1 = New-Object System.Data.DataColumn "Printer Name", ([string])
-$col2 = New-Object System.Data.DataColumn "Model", ([string])
-$col3 = New-Object System.Data.DataColumn "IP Address", ([string])
-$col4 = New-Object System.Data.DataColumn "WSD", ([Object])
-$col5 = New-Object System.Data.DataColumn "WSPrint", ([string])
-$col6 = New-Object System.Data.DataColumn "Bonjour", ([string])
-$col7 = New-Object System.Data.DataColumn "Wi-Fi Direct", ([string])
-$col8 = New-Object System.Data.DataColumn "GET", ([string])
-$col9 = New-Object System.Data.DataColumn "Toner", ([string])
-$col10 = New-Object System.Data.DataColumn "Firmware", ([string])
+$col1 = New-Object System.Data.DataColumn "Date Time", ([string])
+$col2 = New-Object System.Data.DataColumn "IP Address", ([string])
+$col3 = New-Object System.Data.DataColumn "Online", ([string])
+$col4 = New-Object System.Data.DataColumn "Printer Name", ([string])
+$col5 = New-Object System.Data.DataColumn "Model", ([string])
+$col6 = New-Object System.Data.DataColumn "WSD", ([bool])
+$col7 = New-Object System.Data.DataColumn "WSPrint", ([bool])
+$col8 = New-Object System.Data.DataColumn "Bonjour", ([bool])
+$col9 = New-Object System.Data.DataColumn "Wi-Fi Direct", ([bool])
+$col10 = New-Object System.Data.DataColumn "Toner", ([string])
+$col11 = New-Object System.Data.DataColumn "Toner S/N", ([string])
+$col12 = New-Object System.Data.DataColumn "Firmware Version", ([string])
+$col13 = New-Object System.Data.DataColumn "Out of Paper", ([string])
+$col14 = New-Object System.Data.DataColumn "Status", ([string])
 
 #Add Columns
 $table.Columns.add($col1)
@@ -67,12 +71,11 @@ $table.Columns.add($col7)
 $table.Columns.add($col8)
 $table.Columns.add($col9)
 $table.Columns.Add($col10)
+$table.Columns.Add($col11)
+$table.Columns.Add($col12)
+$table.Columns.Add($col13)
+$table.Columns.Add($col14)
 
-#Add header row
-$rw = $table.NewRow()
-$key = 'Key: 0 = off, 1 = on, SET = has value, NOT_SET = no value'
-$rw."Printer Name" = $key
-$table.Rows.Add($rw)
 
 foreach ($printer in $printers){
     
@@ -94,10 +97,11 @@ foreach ($printer in $printers){
     
     #check printer status, open SNMP on success
     if($RESULT.Status -eq 'Success'){
+        $online = $True
 
         #Open SNMP Connection to Printer
         $SNMP.open($printer,'public',2,3000)
- 
+
         #Get model
         try {$model = $SNMP.Get('.1.3.6.1.2.1.25.3.2.1.3.1') } catch {$model = $null}
 
@@ -105,118 +109,326 @@ foreach ($printer in $printers){
         try{$printerName = $SNMP.Get('.1.3.6.1.2.1.1.5.0') } catch {$printerName = $null}
 
         #Get Manufacturer
-        $make = $SNMP.Get('.1.3.6.1.2.1.43.8.2.1.14.1.1')
+        try{$make = $SNMP.Get('.1.3.6.1.2.1.43.8.2.1.14.1.1')} catch{$make = $null}
 
-        #Create a row and add base info
-        $row = $table.NewRow()
+        #SNMP Status
+        try{$status = $SNMP.Get('.1.3.6.1.2.1.25.3.2.1.5.1')} catch {$status = $null}
+        $strStatus = Out-String -InputObject $status
+        $strStatus = $strStatus.Trim()
+        if($strStatus -eq '1'){$strStatus = "Unknown"}
+        elseif($strStatus -eq '2'){$strStatus = "Running"}
+        elseif($strStatus -eq '3'){$strStatus = "Warning"}
+        elseif($strStatus -eq '4'){$strStatus = "Testing"}
+        elseif($strStatus -eq '5'){$strStatus = "Unavailable"}
+        
+        #Create a base row and log row, add base info
         $row."Printer Name" = $printerName
         $row."Model" = $model
-        $row."IP Address" = $printer
+        $row."Online" = $online
+        $row."Status" = $strStatus
            
             if ($model){
 
                 #HP
-                if($make -eq "HP" -or
-                   $make -eq "Hewlett-Packard"){
-
+               if($make -eq "HP" -or
+                  $make -eq "Hewlett-Packard"){
                    #WSDiscovery
-                   $WSDISCOVER = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.36') 
-                   $strWSD = Out-String -InputObject $WSDISCOVER
-                   $strWSD = $strWSD.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.36.0")
-                   $row."WSD" = $strWSD.Trim()
+                   if($Log){WriteLog "Attempting WS Discover"}
+                   $WSD = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.36.0') 
+                   $strWSD = Out-String -InputObject $WSD
+                   #$strWSD = $strWSD.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.36.0")
+                   $strWSD = $strWSD.Trim()
+                   if($strWSD -contains '1'){$bWSD = $True}else{$bWSD = $False}
+                   $row."WSD" = $bWSD
+
 
                    #WSPrint
                    $WSPRINT = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.37') 
                    $strWSPRINT = Out-String -InputObject $WSPRINT
+
                    $strWSPRINT = $strWSPRINT.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.37.0")
-                   $row."WSPrint" = $strWSPRINT.Trim()
+                   $strWSPRINT = $strWSPRINT.Trim()
+                   if($strWSPRINT -eq '0'){$bWSP = $False}elseif($strWSPRINT -eq '1'){$bWSP = $True}
+                   $row."WSPrint" = $bWSP
 
                    #Bonjour
                    $BONJOUR = $SNMP.GetTree('.1.3.6.1.4.1.11.2.4.3.7.29')
                    $strBONJOUR = Out-String -InputObject $BONJOUR
+
                    $strBONJOUR = $strBONJOUR.Trim(".iso.org.dod.internet.private.enterprises.11.2.4.3.7.29.0")
-                   $row."Bonjour" = $strBONJOUR.Trim()
-                 
+                   $strBONJOUR = $strBONJOUR.Trim()
+                   if($strBONJOUR -eq '0'){$bBon = $False}else{$bBon = $True}
+                   $row."Bonjour" = $bBon
+                   
                    #WiFi Direct
                    try{$WFD = $SNMP.Get('.1.3.6.1.4.1.11.2.4.3.7.74.0')} catch{$WFD = $null}
-                   
-
                         if ($WFD -eq '0' -or
                             $WFD -eq '1'){
 
-                            $row."Wi-Fi Direct" = $WFD
+                            if($WFD -eq '0'){$bWFD = $False}else{$bWFD = $True}
+                            $row."Wi-Fi Direct" = $bWFD
+                            try{$WFD = $SNMP.Get('.1.3.6.1.4.1.11.2.4.3.7.74.0')}         catch{WriteLog "$printer : Wi-Fi Direct not responding"}
+                            if($WFD -eq 'OFF' -and $Log){WriteLog "Wi-Fi Direct is $WFD"}elseif($Log){WriteLog "Wi-Fi Direct request failed"}
 
                         }
-                        else{$row."Wi-Fi Direct" = 'NA'}
-
-                   #SNMP GET
-                   $GET = $SNMP.get('.1.3.6.1.4.1.2699.1.2.1.2.1.1.7.1')          
-                   $strGET = Out-String -InputObject $GET
-                   $row."GET" = $strGET.Trim()
+                        else{
+                            $bWFD = $False
+                            $row."Wi-Fi Direct" = $bWFD                    
+                        }
 
                    #Toner
                    $Toner = $SNMP.Get('.1.3.6.1.2.1.43.11.1.1.9.1.1')          
                    $strToner = Out-String -InputObject $Toner
-                   $row."Toner" = $strToner.Trim() + "%"
+                   $row."Toner" = $strToner.Trim()
+
+                   #Toner S/N
+                   $TonerSN = $SNMP.Get('.1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.10.1.1.3.1.0')
+                   $strTonerSN = Out-String -InputObject $TonerSN
+                   $strTonerSN = $strTonerSN.Trim([char]0x0001, [char]0x0015)
+
+                   $strTonerSN = $strTonerSN.Trim()
+                   $row."Toner S/N" = $strTonerSN
 
                    #Firmware
                    $firmware = $SNMP.Get('.1.3.6.1.4.1.11.2.3.9.4.2.1.1.3.5.0')
                    $strFirmware = Out-String -InputObject $firmware
-                   $row."Firmware" = $strFirmware.Trim()
+                   $strFirmware = $strFirmware.Trim([char]0x0001, [char]0x0015)
+
+                   $row."Firmware Version" = $strFirmware.Trim()
+
+                   #Paper Out
+                   if($Log){WriteLog "Attempting to find Paper"}
+                   $paper = $SNMP.Get('.1.3.6.1.2.1.43.16.5.1.2.1.1')
+                   $strPaper = Out-String -InputObject $paper
+                   $strPaper = $strPaper.Trim()
+                   if($strPaper -eq "Load Paper."){$bPaper = $True}else{$bPaper = $False}
+                   $row."Out of Paper" = $bPaper 
 
                    #Add Row
                    $table.Rows.Add($row)
-
                    }
 
                 #Copier
                  elseif($make -eq 'RICOH' -or
                        $make -eq 'LANIER'){
                 
-                    #Bonjour
-                    $BONJOUR = $SNMP.GET('.1.3.6.1.4.1.2699.1.2.1.3.1.1.2.1.7') - 1
-                    $strBONJOUR = Out-String -InputObject $BONJOUR
-                    $row."Bonjour" = $strBONJOUR.Trim()
-                    
+                      #WSD
+                    if($Log){WriteLog "Attempting WS Discover"}
+                    $WSD = $SNMP.Get('.1.3.6.1.2.1.43.14.1.1.8.1.8')
+                    $strWSD = Out-String -InputObject $WSD
 
-                    #WSD
-                    $WSDISCOVER = $SNMP.Get('.1.3.6.1.4.1.2699.1.2.1.3.1.1.2.1.13') - 1
-                    $strWSD = Out-String -InputObject $WSDISCOVER
-                    $row."WSD" = $strWSD.TrimEnd()
+                    $strWSD = $strWSD.Trim()
+                    if($strWSD -eq '1'){$bWSD = $False}else{$bWSD = $True}
+                    $row."WSD" = $bWSD
+                    if($Log -and $WSD){WriteLog "WS Discover is $strWSD"} elseif($Log){WriteLog "WS Discover failed"}
 
                     #WSPrint
-                    $WSPRINT = $SNMP.Get('.1.3.6.1.4.1.2699.1.2.1.2.1.1.8.1') - 1
+                    $WSPRINT = $SNMP.Get('.1.3.6.1.2.1.43.14.1.1.8.1.8')
                     $strWSP = Out-String -InputObject $WSPRINT
-                    $row."WSPrint" = $strWSP.TrimEnd()
+
+                    $strWSP = $strWSP.Trim()
+                    if($strWSP -eq '1'){$bWSP = $False}else{$bWSP = $True}
+                    $row."WSPrint" = $bWSP
+
+                    #Bonjour
+                    try{$BONJOUR = $SNMP.GET(".1.3.6.1.4.1.2699.1.2.1.3.1.1.2.1.7")} 
+                    catch{
+                        $BONJOUR = $null 
+                        $row."Bonjour" = "OFF"
+                    }
+
+                    if($BONJOUR){
+                    $strBONJOUR = Out-String -InputObject $BONJOUR
+
+                    $strBONJOUR = $strBONJOUR.Trim()
+                    if($strBONJOUR -eq '2'){$bBon = $True}else{$bBon = $False}
+                    $row."Bonjour" = $bBon
+                    }
 
                     #WFD
-                    $strWFD = "NA"
-                    $row."Wi-Fi Direct" = $strWFD
-
-                    #GET
-                    $GET = $SNMP.Get('.1.3.6.1.4.1.2699.1.2.1.2.1.1.7.1')
-                    $strGET = Out-String -InputObject $GET
-                    $row."GET" = $strGET.TrimEnd()
+                    $bWFD = $False
+                    $row."Wi-Fi Direct" = $bWFD
 
                     #Toner
-                    $TonerBK = $SNMP.Get('.1.3.6.1.2.1.43.11.1.1.9.1.1') #Black
-                    $strTonerBK = Out-String -InputObject $TonerBK
-                    $row."Toner" = $strTonerBK.Trim() + "%"
+                    if($Log){WriteLog "Attempting Toner Level"}
+                    $Toner = $SNMP.Get('.1.3.6.1.2.1.43.11.1.1.9.1.1') #Black
+                    $strToner = Out-String -InputObject $Toner
+
+                    $strToner = $strToner.Trim()
+                    $row."Toner" = $strToner
+                    
+                    #Toner S/N
+                    $row."Toner S/N" = ""
 
                     #Firmware
-                    $firmware = $SNMP.Get('.1.3.6.1.4.1.367.3.2.1.1.1.2.0')
-                    $strFirmware = Out-String -InputObject $firmware
-                    $row."Firmware" = $strFirmware.Trim()
+                    $Firmware = $SNMP.Get('.1.3.6.1.4.1.367.3.2.1.1.1.2.0')
+                    $strFirmware = Out-String -InputObject $Firmware
+
+                    $strFirmware = $strFirmware.Trim([char]0x0001, [char]0x0015)
+                    $row."Firmware Version" = $strFirmware.Trim()
+
+                    #Paper
+                    $paper = $SNMP.Get('.1.3.6.1.2.1.43.8.2.1.10.1.1')
+                    $strPaper = Out-String -InputObject $paper
+                    $strPaper = $strPaper.Trim()
+                    
+                    if($strPaper -eq '0'){$bPaper = $True}
+                    elseif($strPaper){$bPaper = $False}
+                    
+                    $row."Out of Paper" = $bPaper
 
                     $table.Rows.Add($row)
                     }
 
-                #Output error if not a recognized make
-                else{
-                $model = "not recognized"
-                $row."Model" = $model
+
+                elseif($make -eq "Source Technologies"){
+
+                    #WSD
+                    $row."WSD" = $False
+
+                    #WSP
+                    if($Log){WriteLog "Attempting WS Print"}
+                    $WSP = $SNMP.GET('.1.3.6.1.2.1.6.13.1.5.0.0.0.0.65500.0.0.0.0.0')
+                    $strWSP = Out-String -InputObject $WSP
+
+                    $strWSP = $strWSP.Trim()
+                    if($strWSP -eq "0"){$bWSP = $False}else{$bWSP = $True}
+                    $row."WSPrint" = $bWSP
+
+                    #Bonjour
+                    if($Log){WriteLog "Attempting Bonjour"}
+                    $BONJOUR = $SNMP.GET('.1.3.6.1.4.1.641.1.4.1.0')
+                    $strBONJOUR = Out-String -InputObject $BONJOUR
+                    $strBONJOUR = $strBONJOUR.Trim()
+
+                    if($strBONJOUR -eq '1'){$bBon = $False}else{$bBon = $True}
+                    $row."Bonjour" = $bBon
+                    if($Log -and $BONJOUR){WriteLog "Bonjour is $strBONJOUR"} elseif($Log){WriteLog "Bonjour request failed"}
+
+                    #WFD
+                    $bWFD = $False
+                    $row."Wi-Fi Direct" = $bWFD
+
+                    #Toner Level
+                    $Toner = $SNMP.GET('.1.3.6.1.4.1.641.2.1.3.1.6.1')
+                    $strToner = Out-String -InputObject $Toner
+                    $strToner = $strToner.Trim()
+
+                    if($strToner -eq '1'){$strToner = '100'}elseif($strToner -eq '2'){$strToner = '0'}
+                    $row."Toner" = $strToner
+
+                    #TonerSN
+                    $TonerSN = $SNMP.Get('.1.3.6.1.4.1.641.6.4.4.1.1.6.1.1')
+                    $strTonerSN = Out-String -InputObject $TonerSN
+                    $row."Toner S/N" = $strTonerSN
+
+                    #Imaging SN
+                    $ImagingSN = $SNMP.Get('.1.3.6.1.4.1.641.6.4.4.1.1.6.1.2')
+                    $strImagingSN = Out-String -InputObject $ImagingSN
+
+                    #Firmware
+                    $Firmware = $SNMP.Get('.1.3.6.1.4.1.641.2.1.2.1.4.1')
+                    $strFirmware = Out-String -InputObject $Firmware
+                    $strFirmware = $strFirmware.Trim([char]0x0001, [char]0x0015)
+
+                    $row."Firmware Version" = $strFirmware.Trim()
+
+                    #Out of Paper
+                    $paper = $SNMP.Get('.1.3.6.1.4.1.641.2.1.3.1.4.1')
+                    $strPaper = Out-String -InputObject $paper
+                    $strPaper = $strPaper.Trim()
+
+                    if($strPaper -eq '1'){$bPaper = $False}elseif($strPaper -eq '2'){$bPaper = $True}
+                    $row."Out of Paper"=$bPaper
+
+                    #Status
+                    $status = $SNMP.Get('.1.3.6.1.4.1.641.2.1.3.1.7.1')
+                    $strStatus = Out-String -InputObject $status
+                    $strStatus = $strStatus.Trim()
+
+                    if($strStatus -eq '1'){$strStatus = 'Running'}else{$strStatus = 'Error'}
+                    $row."Status" = $strStatus
+
+                    $table.Rows.Add($row)
+
+            } 
+            elseif($model -eq "Zebra Printer"){
+
+                $model = $SNMP.GET('.1.3.6.1.4.1.683.6.2.3.2.1.15.1')
+                $row.'Model' = $model
+                #WSD
+                $bWSD = $False
+                $row."WSD" = $bWSD
+                #WSPrint
+                $bWSP = $False
+                $row."WSPrint" = $bWSP
+                #Bonjour
+                $bBon = $False
+                $row."Bonjour" = $bBon
+                #Wi-Fi Direct
+                $bWFD = $False
+                $row."Wi-Fi Direct" = $bWFD
+                #Toner
+                $strToner = ''
+                $row."Toner"=$strToner
+
+                #Toner S/N
+                $strTonerSN = ''
+                $row."Toner S/N"=$strTonerSN         
+
+                #Firmware
+                $firmware = $SNMP.Get('.1.3.6.1.4.1.683.1.9.0')
+                $row."Firmware Version" = $firmware
+
+                #Out of Paper
+                $paper = $SNMP.Get('.1.3.6.1.4.1.11.2.3.9.1.1.2.1.0')
+                if($paper -eq '1'){$bPaper = $True}elseif($paper -eq '0'){$bPaper = $False}
+                $row."Out of Paper" = $bpaper
+
+                #Status
+                $status = $SNMP.Get('.1.3.6.1.4.1.683.6.2.3.2.1.3.1')
+                $row."Status" = $status
+            
                 $table.Rows.Add($row)
-                }
+            }
+            #Receipt Printers
+            elseif($model -eq 'Epson UB-E03' -or
+                    $model -eq 'Epson UB-E04'){
+
+                $printerName = $SNMP.GET('.1.3.6.1.2.1.1.6.0')
+                $row.'Printer Name' = $printerName        
+                #WSD
+                $row."WSD" = $False
+                
+                #WSP
+                $row."WSPrint" = $False
+
+                #Bonjour
+                $row."Bonjour" = $False
+
+                #WFD
+                $row."Wi-Fi Direct" = $False
+
+                #Toner
+                $row."Toner" = ''
+
+                #TonerS/N
+                $row."Toner S/N" = ''
+                #Firmware
+                $firmware = $SNMP.Get('.1.3.6.1.2.1.1.5.0')
+                $strFirmware = Out-String -InputObject $firmware
+                $strFirmware = $strFirmware.Trim()
+                $row."Firmware Version" = $strFirmware
+
+                #Out of Paper
+                try{$paper = $SNMP.Get('.1.3.6.1.4.1.1248.3.1.3.1.7.18.0')}catch{$paper = $null}
+                $strPaper = Out-String -InputObject $paper
+                $strPaper = $strPaper.Trim()
+                if($strPaper = '1'){$bPaper = $True}else{$bPaper = $False}
+                $row."Out of Paper" = $bPaper
+
+                $table.Rows.Add($row)
+            }
 
             }
          }
@@ -240,5 +452,7 @@ foreach ($printer in $printers){
 #Close SNMP
 $SNMP.Close()
 #Export to CSV
-$table | Export-Csv -Path $Output -NoTypeInformation
+foreach($row in $table){    
+    ConvertTo-Csv $row -Delimiter "," -NoTypeInformation | Select-Object -Skip 1 | Add-Content -Path $Output
+    }
  
